@@ -1,0 +1,22 @@
+# Direct dependencies — edit this file, then run: make compile
+
+# Core agent
+langgraph
+langchain-google-genai
+langchain-core
+
+# HTTP client (REST Countries API)
+httpx
+
+# Environment variables
+python-dotenv
+
+# Web framework
+fastapi
+uvicorn[standard]
+pydantic
+
+# Testing
+pytest
+pytest-asyncio
+respx
