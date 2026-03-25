@@ -4,5 +4,4 @@ node_modules/
 .venv/
 .next/
 .pytest_cache/
-DESIGN.md
 VIDEO_WALKTHROUGH.md
