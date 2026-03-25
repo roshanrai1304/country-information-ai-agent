@@ -18,18 +18,21 @@ export default function HistoryPage() {
 
   if (entries.length === 0) {
     return (
-      <div className="max-w-3xl mx-auto px-8 py-24 text-center">
-        <Clock size={52} className="text-gray-300 mx-auto mb-5" />
-        <h2 className="text-2xl font-black text-navy mb-2">No Archives Yet</h2>
-        <p className="text-gray-500 text-sm leading-relaxed max-w-sm mx-auto">
-          Your session queries will appear here. History is stored in your browser and clears
-          when you close this tab.
-        </p>
+      <div className="h-full overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-8 py-24 text-center">
+          <Clock size={52} className="text-gray-300 mx-auto mb-5" />
+          <h2 className="text-2xl font-black text-navy mb-2">No Archives Yet</h2>
+          <p className="text-gray-500 text-sm leading-relaxed max-w-sm mx-auto">
+            Your session queries will appear here. History is stored in your browser and clears
+            when you close this tab.
+          </p>
+        </div>
       </div>
     )
   }
 
   return (
+    <div className="h-full overflow-y-auto">
     <div className="max-w-3xl mx-auto px-8 py-10">
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -72,6 +75,7 @@ export default function HistoryPage() {
           </div>
         ))}
       </div>
+    </div>
     </div>
   )
 }
