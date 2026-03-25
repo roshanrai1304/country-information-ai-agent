@@ -390,13 +390,23 @@ The chat page catches `ApiError` and displays its `.message` directly in the thr
 - Logged fields: `request_id`, `event`, `question`, `countries`, `latency_ms`.
 - Rate limit hits logged at `WARNING`; agent errors logged at `ERROR`.
 
+### Token Optimisation
+Two strategies reduce Gemini token usage by ~40–50% per request:
+
+1. **Field trimming** (`_trim_for_llm`): Before sending API data to Node 3, these fields are stripped — they add tokens without helping the text answer:
+   - `altSpellings`, `maps`, `flag` (emoji), `latlng`, `cca2`, `flags.png/svg`, `demonyms.fra`
+   - Compact JSON (`separators=(",",":")`) instead of pretty-printed JSON
+
+2. **Dual model strategy**: Gemini Flash is used for Node 1 (simple extraction — 30× higher free-tier quota). Gemini Pro is reserved for Node 3 (synthesis — needs more reasoning quality).
+
 ### Configuration
 All secrets and config are via environment variables:
 
 | Variable | Description | Default |
 |---|---|---|
 | `GOOGLE_API_KEY` | Gemini API key | — (required) |
-| `GEMINI_MODEL` | Gemini model ID | `gemini-1.5-pro` |
+| `GEMINI_MODEL` | Model for Node 3 (synthesis) | `gemini-1.5-pro` |
+| `GEMINI_MODEL_FAST` | Model for Node 1 (extraction) | `gemini-1.5-flash` |
 | `CORS_ORIGINS` | Allowed frontend origins | `*` |
 
 ### Scalability
@@ -408,9 +418,9 @@ All secrets and config are via environment variables:
 
 ## 9. Known Limitations and Trade-offs
 
-### No Caching
-**Decision**: No caching layer per constraints.
-**Impact**: Every request hits both the REST Countries API and Gemini. Latency is ~3–6 s total. A short-lived cache (Redis, 1-hour TTL) on API responses would significantly reduce latency and Gemini costs since country data changes infrequently.
+### In-Memory Cache Only (No Persistent Cache)
+**Decision**: REST Countries API responses are cached in-memory (Python dict) with a 1-hour TTL per country. No Redis or external cache.
+**Impact**: Repeated queries for the same country within a server session skip the HTTP call entirely. However, the cache is lost on server restart and is not shared across multiple server instances. A persistent cache (Redis) would be needed for true production scale.
 
 ### Gemini Hallucination Risk
 **Decision**: Gemini synthesises answers from raw API data.
@@ -450,21 +460,28 @@ Country Information AI Agent/
 │   ├── agent/
 │   │   ├── __init__.py
 │   │   ├── graph.py          # LangGraph graph definition + compiled agent
-│   │   ├── nodes.py          # Node 1, 2, 3 + GeminiRateLimitError
+│   │   ├── guardrails.py     # Prompt injection guard rails (3 layers)
+│   │   ├── nodes.py          # Node 1, 2, 3 + GeminiRateLimitError + _trim_for_llm
 │   │   ├── state.py          # AgentState TypedDict
 │   │   └── prompts.py        # Gemini prompt templates (intent + synthesis)
 │   ├── api/
 │   │   ├── __init__.py
 │   │   ├── main.py           # FastAPI app, routes, error classification
-│   │   └── schemas.py        # AskRequest / AskResponse (Pydantic)
+│   │   └── schemas.py        # AskRequest / AskResponse / FlagInfo (Pydantic)
 │   ├── services/
-│   │   └── countries_api.py  # Two-stage REST Countries API client
+│   │   └── countries_api.py  # Two-stage lookup + in-memory TTL cache
 │   ├── tests/
-│   │   ├── conftest.py
+│   │   ├── conftest.py       # Cache clearing fixture (autouse)
 │   │   ├── test_nodes.py
 │   │   ├── test_api.py
+│   │   ├── test_guardrails.py
 │   │   └── test_countries_service.py
 │   ├── .env.example
+│   ├── Dockerfile            # Two-stage Docker image (uv + python:3.13-slim)
+│   ├── .dockerignore
+│   ├── Procfile              # For Railway deployment
+│   ├── railway.json          # Railway build + start config
+│   ├── vercel.json           # For Vercel serverless deployment
 │   ├── requirements.in       # Direct dependencies (edit this)
 │   ├── requirements.txt      # Pinned deps (compiled via uv)
 │   └── Makefile              # install / compile / run / test
@@ -472,24 +489,29 @@ Country Information AI Agent/
 │   ├── src/
 │   │   ├── app/
 │   │   │   ├── layout.tsx         # App shell (Sidebar + TopNav)
-│   │   │   ├── page.tsx           # Chat interface + EmptyState
+│   │   │   ├── page.tsx           # Chat interface + EmptyState + New Chat button
 │   │   │   ├── globals.css
-│   │   │   ├── history/page.tsx   # Session archive
+│   │   │   ├── history/page.tsx   # Scrollable session archive
 │   │   │   └── about/page.tsx     # Methodology
 │   │   ├── components/
 │   │   │   ├── Sidebar.tsx        # Left navigation
 │   │   │   ├── TopNav.tsx         # Top bar with tabs
-│   │   │   ├── ChatMessage.tsx    # Message bubble (user + assistant)
+│   │   │   ├── ChatMessage.tsx    # Message bubble + flag image rendering
 │   │   │   └── ChatInput.tsx      # Auto-expanding textarea + send button
 │   │   └── lib/
-│   │       ├── api.ts             # askQuestion() + ApiError class
+│   │       ├── api.ts             # askQuestion() + ApiError + FlagInfo types
 │   │       └── history.ts         # sessionStorage read/write/clear
 │   ├── .env.local.example
-│   ├── next.config.mjs
+│   ├── Dockerfile            # Two-stage Next.js standalone image
+│   ├── .dockerignore
+│   ├── vercel.json           # Vercel deployment config
+│   ├── next.config.mjs       # output: standalone (Docker) + flagcdn.com image domain
 │   ├── tailwind.config.ts
 │   ├── package.json
 │   └── Makefile                   # install / dev / build / lint
-└── DESIGN.md                      # This document
+├── docker-compose.yml             # Run backend + frontend together locally
+├── DESIGN.md
+└── README.md
 ```
 
 ---
@@ -515,15 +537,63 @@ make build      # next build
 make lint       # next lint
 ```
 
+### Docker (both services)
+```bash
+# Build and run backend + frontend together
+docker-compose up --build
+
+# Backend → http://localhost:8000
+# Frontend → http://localhost:3000
+```
+
 ---
 
-## 12. Development Phases (Completed)
+## 12. Deployment
+
+### Frontend — Vercel
+
+| Field | Value |
+|---|---|
+| Root Directory | `frontend` |
+| Framework Preset | `Next.js` |
+| Environment Variable | `NEXT_PUBLIC_API_URL=<backend URL>` |
+
+Config file: `frontend/vercel.json`
+
+### Backend — Railway (recommended)
+
+| Field | Value |
+|---|---|
+| Root Directory | `backend` |
+| Start Command | `uvicorn api.main:app --host 0.0.0.0 --port $PORT` |
+
+Environment variables required on Railway:
+```
+GOOGLE_API_KEY=...
+GEMINI_MODEL=gemini-1.5-pro
+GEMINI_MODEL_FAST=gemini-1.5-flash
+CORS_ORIGINS=https://your-app.vercel.app
+```
+
+Config files: `backend/railway.json`, `backend/Procfile`
+
+### Backend — Vercel (serverless)
+
+Vercel runs Python as serverless functions. The in-memory cache will not persist between requests (cold starts). Suitable for low-traffic use.
+
+Config file: `backend/vercel.json`
+
+---
+
+## 13. Development Phases (Completed)
 
 | Phase | Scope | Status |
 |---|---|---|
 | **Phase 1** | Backend: LangGraph agent (3 nodes), REST Countries API client, unit tests | Done |
 | **Phase 2** | Backend: FastAPI wrapper, schemas, error handling, rate limit detection | Done |
-| **Phase 3** | Frontend: Next.js chat UI, session history, error surfacing | Done |
+| **Phase 3** | Frontend: Next.js chat UI, session history, flag images, error surfacing | Done |
+| **Phase 4** | Docker, docker-compose, Vercel + Railway deployment configs | Done |
+| **Phase 5** | Guard rails (3-layer injection protection), token optimisation, in-memory cache | Done |
 | **Phase 4** | Dockerisation, docker-compose, deployment configuration | Pending |
 
 ---

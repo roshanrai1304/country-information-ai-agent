@@ -19,7 +19,7 @@ class GeminiRateLimitError(Exception):
 
 def _get_llm() -> ChatGoogleGenerativeAI:
     """Full model — used for Node 3 (answer synthesis)."""
-    model = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
     return ChatGoogleGenerativeAI(model=model, temperature=0)
 
 
@@ -30,7 +30,7 @@ def _get_llm_fast() -> ChatGoogleGenerativeAI:
     than capable of the simple JSON extraction task in Node 1.
     Override via GEMINI_MODEL_FAST env var.
     """
-    model = os.getenv("GEMINI_MODEL_FAST", "gemini-1.5-flash")
+    model = os.getenv("GEMINI_MODEL_FAST", "gemini-2.5-flash")
     return ChatGoogleGenerativeAI(model=model, temperature=0)
 
 

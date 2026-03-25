@@ -12,6 +12,8 @@ An AI-powered chat agent that answers natural language questions about countries
 - [Backend Setup](#backend-setup)
 - [Frontend Setup](#frontend-setup)
 - [Running Both Servers](#running-both-servers)
+- [Docker](#docker)
+- [Deployment](#deployment)
 - [Environment Variables](#environment-variables)
 - [API Reference](#api-reference)
 - [Running Tests](#running-tests)
@@ -22,7 +24,8 @@ An AI-powered chat agent that answers natural language questions about countries
 
 | Layer | Technology | Version |
 |---|---|---|
-| **LLM** | Google Gemini | `gemini-1.5-pro` (configurable) |
+| **LLM (Node 1 — extraction)** | Google Gemini Flash | `gemini-1.5-flash` (configurable) |
+| **LLM (Node 3 — synthesis)** | Google Gemini Pro | `gemini-1.5-pro` (configurable) |
 | **Agent orchestration** | LangGraph + LangChain | `langgraph>=0.2`, `langchain-google-genai>=2.0` |
 | **Backend framework** | FastAPI + Uvicorn | `fastapi>=0.115`, `uvicorn>=0.32` |
 | **Backend language** | Python | 3.13+ |
@@ -33,6 +36,7 @@ An AI-powered chat agent that answers natural language questions about countries
 | **Frontend package manager** | npm | 11+ |
 | **Node.js** | Node.js | 20+ |
 | **External data source** | REST Countries API | v3.1 (public, no auth) |
+| **Containerisation** | Docker + docker-compose | latest |
 
 ---
 
@@ -58,6 +62,11 @@ Country Information AI Agent/
 │   │   ├── test_guardrails.py
 │   │   └── test_nodes.py
 │   ├── .env.example
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── Procfile              # Railway deployment
+│   ├── railway.json          # Railway build config
+│   ├── vercel.json           # Vercel serverless config
 │   ├── Makefile
 │   ├── requirements.in       # Direct dependencies (edit this)
 │   └── requirements.txt      # Pinned dependencies (compiled by uv)
@@ -77,10 +86,14 @@ Country Information AI Agent/
 │   │       ├── api.ts             # Backend API client + ApiError
 │   │       └── history.ts         # sessionStorage helpers
 │   ├── .env.local.example
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── vercel.json           # Vercel deployment config
 │   ├── Makefile
-│   ├── next.config.mjs
+│   ├── next.config.mjs       # output: standalone + flagcdn.com image domain
 │   ├── package.json
 │   └── tailwind.config.ts
+├── docker-compose.yml        # Run backend + frontend together locally
 ├── DESIGN.md
 └── README.md
 ```
@@ -174,8 +187,8 @@ Open `.env` and fill in your values:
 # Required — your Google Gemini API key
 GOOGLE_API_KEY=your_google_api_key_here
 
-# Optional — Gemini model to use (default: gemini-1.5-pro)
-GEMINI_MODEL=gemini-1.5-pro
+# Optional — Gemini model to use (default: gemini-3.1-pro)
+GEMINI_MODEL=gemini-2.5-flash
 
 # Optional — allowed frontend origins for CORS (default: * for development)
 CORS_ORIGINS=*
@@ -259,6 +272,54 @@ Open **http://localhost:3000** in your browser.
 
 ---
 
+## Docker
+
+Run both services with a single command:
+
+```bash
+# Build and start backend + frontend
+docker-compose up --build
+
+# Backend → http://localhost:8000
+# Frontend → http://localhost:3000
+```
+
+> Make sure `backend/.env` exists with your `GOOGLE_API_KEY` before running.
+
+Stop and remove containers:
+```bash
+docker-compose down
+```
+
+---
+
+## Deployment
+
+### Frontend → Vercel
+
+1. Connect your GitHub repo to [Vercel](https://vercel.com)
+2. Set **Root Directory** → `frontend`
+3. Set **Framework Preset** → `Next.js`
+4. Add environment variable: `NEXT_PUBLIC_API_URL=<your backend URL>`
+5. Deploy
+
+### Backend → Railway (recommended)
+
+1. Go to [Railway](https://railway.app) → New Project → Deploy from GitHub
+2. Set **Root Directory** → `backend`
+3. Add environment variables:
+   ```
+   GOOGLE_API_KEY=your_key
+   GEMINI_MODEL=gemini-1.5-pro
+   GEMINI_MODEL_FAST=gemini-1.5-flash
+   CORS_ORIGINS=https://your-app.vercel.app
+   ```
+4. Start Command (auto-detected from `Procfile`): `uvicorn api.main:app --host 0.0.0.0 --port $PORT`
+
+> **Note:** If deploying the backend on Vercel instead of Railway, the in-memory country cache will not persist between requests (serverless cold starts).
+
+---
+
 ## Environment Variables
 
 ### Backend (`backend/.env`)
@@ -266,8 +327,9 @@ Open **http://localhost:3000** in your browser.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GOOGLE_API_KEY` | Yes | — | Google Gemini API key |
-| `GEMINI_MODEL` | No | `gemini-1.5-pro` | Gemini model ID |
-| `CORS_ORIGINS` | No | `*` | Comma-separated allowed origins |
+| `GEMINI_MODEL` | No | `gemini-1.5-pro` | Gemini model for Node 3 (synthesis) |
+| `GEMINI_MODEL_FAST` | No | `gemini-1.5-flash` | Gemini model for Node 1 (extraction) |
+| `CORS_ORIGINS` | No | `*` | Comma-separated allowed frontend origins |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -364,7 +426,7 @@ Test files:
 | `test_countries_service.py` | Two-stage API lookup, partial failures, best-match selection |
 | `test_guardrails.py` | Injection pattern detection, country name sanitisation |
 
-Current test count: **85 tests, all passing**.
+Current test count: **93 tests, all passing**.
 
 ---
 
